@@ -434,6 +434,11 @@ const LONG_TEXT = [
   'В кэш после отмены не должно попасть ничего: следующий запрос обязан начать синтез заново, а не отдать недосчитанное аудио.',
 ].join(' ');
 
+// Отмена взводится, пока синтез идёт: python грузит модель около секунды даже на быстрой
+// машине, поэтому 300 мс попадают внутрь работы. Привязать отмену к длине текста нельзя —
+// на быстрой машине часть успевает досчитаться, и тест начинал падать на ровном месте.
+const CANCEL_DELAY_MS = 300;
+
 function tempSileroDirs() {
   return readdirSync(tmpdir()).filter((name) => name.startsWith('tg-reader-silero-'));
 }
@@ -455,7 +460,7 @@ async function testRealCancellation() {
 
   const controller = new AbortController();
   const startedAt = Date.now();
-  const timer = setTimeout(() => controller.abort(), 2000);
+  const timer = setTimeout(() => controller.abort(), CANCEL_DELAY_MS);
 
   let error = null;
   try {
