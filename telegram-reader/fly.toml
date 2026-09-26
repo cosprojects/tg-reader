@@ -1,0 +1,42 @@
+# Fly.io: backend Telegram Reader (бот, HTTP API, Silero).
+# Запуск из каталога telegram-reader/: fly deploy
+app = "tg-reader-backend"
+primary_region = "waw"
+
+[build]
+  # Контекст сборки — каталог telegram-reader/, поэтому путь до Dockerfile относительный.
+  dockerfile = "server/Dockerfile"
+
+[env]
+  # Кэш аудио и voices.json живут на томе: переживают перезапуск и деплой.
+  AUDIO_CACHE_DIR = "/data/audio"
+  TTS_SILERO_DATA_DIR = "/data/silero"
+  TTS_AUDIO_COMPRESSOR = "ffmpeg"
+  SILERO_THREADS = "2"
+  API_PORT = "3001"
+
+[[mounts]]
+  source = "audio_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 3001
+  force_https = true
+  # Бот опрашивает Telegram постоянно, поэтому машина не должна засыпать:
+  # после остановки посты перестают приходить, пока кто-то не откроет Mini App.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "30s"
+    method = "GET"
+    path = "/api/health"
+
+[[vm]]
+  # Синтез идёт на CPU: два ядра заметно сокращают время части, памяти хватает 2 ГБ
+  # (torch + модель ~ 1 ГБ в пике). Размер меняется здесь или в дашборде.
+  size = "shared-cpu-2x"
+  memory = "2gb"

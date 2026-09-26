@@ -1,0 +1,14 @@
+# В образ попадают только исходники: зависимости ставятся внутри по package-lock.json.
+node_modules
+**/node_modules
+app/dist
+.venv-silero
+.piper-voices
+.silero
+.audio-cache
+.env
+.env.*
+!.env.example
+.git
+.DS_Store
+*.log
