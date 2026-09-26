@@ -1,0 +1,53 @@
+# Dependencies
+node_modules/
+jspm_packages/
+.pnp
+.pnp.js
+
+# Build output
+dist/
+build/
+out/
+.next/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Testing
+coverage/
+.nyc_output/
+
+# Caches
+.cache/
+.audio-cache/
+# Голоса Piper (модель голоса ~60 МБ)
+.piper-voices/
+.turbo/
+.eslintcache
+.parcel-cache/
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# Telegram session data
+*.session
+*.session-journal
+
+# Silero: отдельное окружение и кэш голосов
+.venv-silero/
+.silero/
