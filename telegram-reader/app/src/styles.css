@@ -1,0 +1,693 @@
+/* POST READER — оформление портативного плеера.
+   Экран — сам плеер: очередь сверху, «дека» управления закреплена у нижнего края
+   viewport с учётом safe area Telegram. Корпус светлый, окно «сейчас играет» тёмное,
+   подписи моноширинные, кнопки с фаской и механическим нажатием.
+   Тема Telegram здесь не используется: устройство выглядит одинаково в светлом
+   и тёмном оформлении. */
+
+:root {
+  --page: #1c1a17;
+  --device: #e9e4d9;
+  --device-edge: #c9c1b1;
+  --device-line: #d8d2c4;
+  --paper: #f5f1e7;
+  --paper-line: #ded8c9;
+  --panel: #2a2823;
+  --panel-ink: #f1ebdd;
+  --panel-dim: #a79e8c;
+  --ink: #26241f;
+  --mono: #6e6656;
+  --accent: #c9542f;
+  --accent-dark: #8f3c1d;
+  --key: #ded8cb;
+  --key-shadow: #b3ab9b;
+  --key-disabled: #e4dfd4;
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* Размеры рассчитаны на палец: строка списка 60 px, кнопки от 48 px. */
+  --source-column: 96px;
+  --row-height: 60px;
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 16px;
+  /* Прокручивается только внутренний список, сама страница не «оттягивается». */
+  overscroll-behavior: none;
+  overflow: hidden;
+}
+
+.app {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Плеер занимает весь viewport: на телефоне это и есть экран, без полей вокруг. */
+.device {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-width: 460px;
+  margin: 0 auto;
+  padding: calc(env(safe-area-inset-top) + 10px) 16px calc(env(safe-area-inset-bottom) + 14px);
+  background: var(--device);
+}
+
+.grille {
+  height: 8px;
+  border-radius: 4px;
+  background-image: repeating-linear-gradient(90deg, rgb(38 36 31 / 16%) 0 2px, transparent 2px 7px);
+  opacity: 0.7;
+}
+
+/* Верхняя часть: очередь. Растягивается, при нехватке места прокручивается. */
+.device-queue {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Нижняя часть: дека управления, всегда у нижнего края. */
+.device-player {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: auto;
+}
+
+/* Плейлист: светлая панель под стеклом, не больше пяти строк. */
+.playlist {
+  background: var(--paper);
+  border: 1px solid var(--paper-line);
+  border-radius: 12px;
+  box-shadow: inset 0 2px 5px rgb(0 0 0 / 14%);
+  overflow: hidden;
+}
+
+.playlist-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: calc(5 * var(--row-height));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: var(--source-column) minmax(0, 1fr) 22px;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: var(--row-height);
+  padding: 10px 12px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--paper-line);
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.playlist-rows li:last-child .row {
+  border-bottom: 0;
+}
+
+.row-source {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--mono);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.row-line {
+  overflow: hidden;
+  font-size: 16px;
+  line-height: 1.3;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.row-state {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  color: var(--accent);
+  text-align: right;
+}
+
+.row.is-current {
+  background: rgb(201 84 47 / 8%);
+  box-shadow: inset 4px 0 0 var(--accent);
+}
+
+.row.is-played .row-state {
+  color: var(--mono);
+}
+
+.row.is-missing {
+  opacity: 0.45;
+}
+
+.row:active {
+  background: rgb(38 36 31 / 6%);
+}
+
+.playlist-hint {
+  margin: 0;
+  padding: 6px 0;
+  border-top: 1px solid var(--paper-line);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--mono);
+  text-align: center;
+}
+
+.edit-control {
+  display: flex;
+  justify-content: center;
+}
+
+/* Окно «сейчас играет». */
+.display {
+  background: var(--panel);
+  border-radius: 12px;
+  padding: 12px 16px 14px;
+  box-shadow: inset 0 2px 8px rgb(0 0 0 / 55%);
+  color: var(--panel-ink);
+}
+
+.display-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--panel-dim);
+}
+
+.display-line {
+  display: -webkit-box;
+  margin: 6px 0 0;
+  overflow: hidden;
+  font-size: 17px;
+  line-height: 1.35;
+  color: var(--panel-ink);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.display-line.is-muted,
+.display-empty {
+  color: var(--panel-dim);
+}
+
+.display-empty {
+  margin: 4px 0 0;
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.display-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+/* Транспорт: таймлайн, время, кнопки. */
+.transport {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.timeline {
+  width: 100%;
+  height: 30px;
+  margin: 0;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.timeline::-webkit-slider-runnable-track {
+  height: 8px;
+  border-radius: 4px;
+  background: #d5cec0;
+  box-shadow: inset 0 1px 3px rgb(0 0 0 / 35%);
+}
+
+.timeline::-webkit-slider-thumb {
+  appearance: none;
+  width: 20px;
+  height: 28px;
+  margin-top: -10px;
+  border: 1px solid var(--key-shadow);
+  border-radius: 4px;
+  background: #f1ece1;
+  box-shadow: 0 1px 0 var(--key-shadow);
+}
+
+.timeline::-moz-range-track {
+  height: 8px;
+  border-radius: 4px;
+  background: #d5cec0;
+}
+
+.timeline::-moz-range-thumb {
+  width: 20px;
+  height: 28px;
+  border: 1px solid var(--key-shadow);
+  border-radius: 4px;
+  background: #f1ece1;
+}
+
+.timeline:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.time-row {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--mono);
+}
+
+.buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  margin-top: 4px;
+}
+
+/* Кнопки: светлая клавиша с фаской и прожатием, акцентная — главная. */
+.btn {
+  min-height: 48px;
+  padding: 12px 16px;
+  border: 1px solid var(--key-shadow);
+  border-radius: 10px;
+  background: var(--key);
+  box-shadow:
+    0 2px 0 var(--key-shadow),
+    inset 0 1px 0 rgb(255 255 255 / 70%);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition:
+    transform 80ms ease,
+    box-shadow 80ms ease;
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(2px);
+  box-shadow:
+    0 0 0 var(--key-shadow),
+    inset 0 1px 3px rgb(0 0 0 / 25%);
+}
+
+.btn:disabled {
+  background: var(--key-disabled);
+  box-shadow: none;
+  color: #a29a8b;
+  cursor: default;
+}
+
+.btn-small {
+  padding: 10px 18px;
+  font-size: 12px;
+}
+
+.btn-wide {
+  width: 100%;
+}
+
+.btn-primary {
+  border-color: var(--accent-dark);
+  background: var(--accent);
+  box-shadow:
+    0 2px 0 var(--accent-dark),
+    inset 0 1px 0 rgb(255 255 255 / 35%);
+  color: #fff5ee;
+}
+
+.btn-primary:disabled {
+  border-color: var(--key-shadow);
+}
+
+.btn-key {
+  display: grid;
+  place-items: center;
+  width: 66px;
+  height: 58px;
+  font-size: 22px;
+  letter-spacing: 0;
+}
+
+.btn-play {
+  display: grid;
+  place-items: center;
+  width: 104px;
+  height: 72px;
+  border-color: var(--accent-dark);
+  background: var(--accent);
+  box-shadow:
+    0 3px 0 var(--accent-dark),
+    inset 0 1px 0 rgb(255 255 255 / 35%);
+  color: #fff5ee;
+  font-size: 26px;
+}
+
+.btn-play:active:not(:disabled) {
+  transform: translateY(3px);
+  box-shadow:
+    0 0 0 var(--accent-dark),
+    inset 0 1px 3px rgb(0 0 0 / 30%);
+}
+
+.btn-play:disabled {
+  border-color: var(--key-shadow);
+  background: var(--key-disabled);
+}
+
+/* Голос и скорость: это настройки, а не главные контролы. */
+.voice {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--device-line);
+}
+
+.voice-title {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  color: var(--mono);
+}
+
+.voice-buttons {
+  display: flex;
+  gap: 10px;
+}
+
+.btn-voice {
+  flex: 1;
+  padding: 15px 0;
+  font-size: 13px;
+}
+
+.btn-voice.is-selected {
+  border-color: #b3ab9b;
+  background: var(--panel);
+  box-shadow: inset 0 2px 6px rgb(0 0 0 / 55%);
+  color: var(--panel-ink);
+}
+
+.speed {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.speed-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.speed-value {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.speed-slider {
+  width: 100%;
+  height: 28px;
+  margin: 0;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.speed-slider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: #cfc7b8;
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 30%);
+}
+
+.speed-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 16px;
+  height: 24px;
+  margin-top: -10px;
+  border: 1px solid var(--key-shadow);
+  border-radius: 4px;
+  background: #f1ece1;
+  box-shadow: 0 1px 0 var(--key-shadow);
+}
+
+.speed-slider::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: #cfc7b8;
+}
+
+.speed-slider::-moz-range-thumb {
+  width: 16px;
+  height: 24px;
+  border: 1px solid var(--key-shadow);
+  border-radius: 4px;
+  background: #f1ece1;
+}
+
+.speed-labels {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 2px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--mono);
+}
+
+.speed-labels .is-active {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* Кнопка локальной очистки: действие редкое и разрушительное, поэтому без акцента. */
+.editor-clear {
+  color: var(--mono);
+  font-size: 12px;
+}
+
+/* Оверлей редактирования плейлиста: панель выдвигается вперёд поверх плеера. */
+.editor {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(env(safe-area-inset-top) + 12px) calc(env(safe-area-inset-right) + 12px)
+    calc(env(safe-area-inset-bottom) + 12px) calc(env(safe-area-inset-left) + 12px);
+}
+
+.editor:not(.is-open) {
+  pointer-events: none;
+}
+
+.editor-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgb(15 14 12 / 62%);
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+
+.editor.is-open .editor-backdrop {
+  opacity: 1;
+}
+
+.editor-sheet {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(100%, 460px);
+  max-height: 100%;
+  padding: 16px;
+  background: var(--device);
+  border: 1px solid var(--device-edge);
+  border-radius: 24px;
+  box-shadow:
+    0 24px 60px rgb(0 0 0 / 50%),
+    inset 0 1px 0 rgb(255 255 255 / 65%);
+  opacity: 0;
+  transform: translateY(18px) scale(0.97);
+  transform-origin: top center;
+  transition:
+    transform 300ms cubic-bezier(0.2, 0.9, 0.25, 1),
+    opacity 220ms ease;
+}
+
+.editor.is-open .editor-sheet {
+  opacity: 1;
+  transform: none;
+}
+
+.editor-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  color: var(--mono);
+}
+
+.editor-title {
+  color: var(--ink);
+}
+
+.editor-rows {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+  touch-action: pan-y;
+}
+
+.editor-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  align-items: center;
+  background: var(--paper);
+  border: 1px solid var(--paper-line);
+  border-radius: 12px;
+  transition: transform 140ms ease;
+  will-change: transform;
+}
+
+.editor-row.is-current {
+  box-shadow: inset 4px 0 0 var(--accent);
+}
+
+.editor-row.is-missing {
+  opacity: 0.45;
+}
+
+.editor-row.is-dragging {
+  z-index: 2;
+  border-color: var(--accent);
+  box-shadow: 0 10px 24px rgb(0 0 0 / 28%);
+  transition: none;
+}
+
+.row-handle {
+  display: grid;
+  place-items: center;
+  min-height: 56px;
+  background: transparent;
+  border: 0;
+  color: var(--mono);
+  font-size: 18px;
+  line-height: 1;
+  cursor: grab;
+  /* Иначе жест утаскивает не строку, а прокрутку списка. */
+  touch-action: none;
+}
+
+.row-main {
+  display: grid;
+  grid-template-columns: var(--source-column) minmax(0, 1fr) 20px;
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+  padding: 8px 4px;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.row-remove {
+  display: grid;
+  place-items: center;
+  min-height: 56px;
+  background: transparent;
+  border: 0;
+  color: var(--mono);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.row-remove:active {
+  color: var(--accent);
+}
+
+/* Desktop: тот же плеер, но колонкой по центру экрана. */
+@media (min-width: 560px) {
+  .app {
+    padding: 24px 0;
+  }
+
+  .device {
+    flex: 1;
+    max-width: 430px;
+    border: 1px solid var(--device-edge);
+    border-radius: 26px;
+    box-shadow:
+      0 20px 44px rgb(0 0 0 / 45%),
+      inset 0 1px 0 rgb(255 255 255 / 65%);
+    padding: 18px 18px 20px;
+  }
+
+  .editor-sheet {
+    width: 430px;
+  }
+}
