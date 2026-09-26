@@ -6,7 +6,7 @@
 // подменён (проверяется логика состояния), во второй части работает настоящий Silero:
 // там проверяется, что «Остановить» реально прерывает синтез и не пишет аудио в кэш.
 import { randomUUID } from 'node:crypto';
-import { readdirSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { loadEnv } from './src/env.js';
@@ -439,6 +439,11 @@ const LONG_TEXT = [
 // на быстрой машине часть успевает досчитаться, и тест начинал падать на ровном месте.
 const CANCEL_DELAY_MS = 300;
 
+// Текст для сценария «пост → стоп → новый пост»: две части по пределу модели.
+// Одной части мало — остановка может прийтись на момент, когда синтез уже дописан,
+// и тогда аудио честно ложится в кэш, а проверка «отменённый пост не оставил каталога» падает.
+const BOT_FLOW_TEXT = `${LONG_TEXT} ${LONG_TEXT}`;
+
 function tempSileroDirs() {
   return readdirSync(tmpdir()).filter((name) => name.startsWith('tg-reader-silero-'));
 }
@@ -523,7 +528,7 @@ async function testRealBotFlow() {
   });
   await bot.init();
 
-  await bot.handleUpdate(postUpdate(LONG_TEXT, { chat, from: user }));
+  await bot.handleUpdate(postUpdate(BOT_FLOW_TEXT, { chat, from: user }));
   await settle(2);
   // Статус поста: после него бот может отправить подсказку с рядом кнопок.
   const postCall = [...log].reverse().find((item) => item.method === 'sendMessage' && /Готовим озвучку|Пост добавлен/.test(item.payload.text ?? ''));
@@ -556,15 +561,15 @@ async function testRealBotFlow() {
   void postCall;
   check('ошибок в этом сценарии не было', errors.length === 0, errors.join('; '));
 
-  // Кэш — рабочий каталог проекта: проверяем, что отменённый пост его не тронул,
-  // и убираем за собой ровно то, что создал тест.
-  const added = readdirSync(cacheDir()).filter((name) => !cacheBefore.includes(name));
-  check(
-    'отменённый пост не оставил каталога в кэше',
-    added.every((name) => name === readyPostId),
-    added.join(', '),
-  );
-  for (const name of added) rmSync(path.join(cacheDir(), name), { recursive: true, force: true });
+  // Кэш — рабочий каталог проекта, в нём могут лежать каталоги других прогонов.
+  // Поэтому проверяем ровно тот пост, который отменили, а не «весь каталог не изменился»:
+  // сравнение всего содержимого ловило чужие записи и падало не по делу.
+  const cancelledDir = path.join(cacheDir(), cancelledPostId);
+  check('отменённый пост не оставил каталога в кэше', !existsSync(cancelledDir), `postId=${cancelledPostId}`);
+
+  // Уборка за собой: только то, что создал этот прогон.
+  rmSync(cancelledDir, { recursive: true, force: true });
+  rmSync(path.join(cacheDir(), readyPostId), { recursive: true, force: true });
 }
 
 async function main() {
