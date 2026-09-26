@@ -1,0 +1,14 @@
+{
+  "name": "server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "PoC: Telegram-бот + in-memory хранилище текстов постов",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "dotenv": "^18.0.3",
+    "grammy": "^1.46.0"
+  }
+}
