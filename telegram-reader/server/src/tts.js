@@ -90,6 +90,8 @@ export function readTtsConfig(env = process.env) {
     sileroDataDir: (env.TTS_SILERO_DATA_DIR || '').trim() || DEFAULT_SILERO_DATA_DIR,
     sileroMaxChars:
       Number(env.TTS_SILERO_MAX_CHARS) > 0 ? Number(env.TTS_SILERO_MAX_CHARS) : DEFAULT_SILERO_MAX_CHARS,
+    // Чем сжимать WAV в m4a. Пусто — по платформе: afconvert на macOS, ffmpeg на сервере.
+    audioCompressor: (env.TTS_AUDIO_COMPRESSOR || '').trim(),
     // Слой нормализации текста перед синтезом; TTS_NORMALIZE=off отключает его целиком.
     normalize: (env.TTS_NORMALIZE || 'on').trim().toLowerCase() !== 'off',
   };
@@ -597,9 +599,50 @@ async function synthesizeWithOpenAi(config, text, signal) {
   return { buffer: Buffer.from(await response.arrayBuffer()), ext: 'mp3', contentType: 'audio/mpeg' };
 }
 
-// Локальный синтез Piper: python из venv запускает пакет piper-tts и пишет WAV.
-// Затем системный afconvert сжимает WAV в m4a — MP3 на этой машине получить нечем
-// (ffmpeg собран под x86 и не запускается, afconvert MP3 писать не умеет).
+// Провайдеры пишут WAV, а Mini App получает m4a: он в разы меньше и играется в вебвью.
+// Сжиматель выбирается по платформе — на macOS это системный afconvert, на сервере ffmpeg.
+// Значение переопределяется TTS_AUDIO_COMPRESSOR, если в образе оказался только один из них.
+const COMPRESSORS = {
+  afconvert: { bin: 'afconvert', args: (wav, m4a) => ['-f', 'm4af', '-d', 'aac', wav, m4a] },
+  // 64 кбит/с моно хватает речи: части по 800 символов весят десятки килобайт,
+  // а это важно, когда Mini App тянет их по мобильной сети.
+  ffmpeg: {
+    bin: 'ffmpeg',
+    args: (wav, m4a) => ['-y', '-loglevel', 'error', '-i', wav, '-c:a', 'aac', '-b:a', '64k', m4a],
+  },
+};
+
+export function pickCompressor(explicit) {
+  const name = String(explicit || '').trim().toLowerCase() || (process.platform === 'darwin' ? 'afconvert' : 'ffmpeg');
+  const compressor = COMPRESSORS[name];
+  if (!compressor) {
+    throw new TtsError(
+      'tts_not_configured',
+      `Неизвестный сжиматель аудио (${name}). Доступны: ${Object.keys(COMPRESSORS).join(', ')}.`,
+    );
+  }
+  return { name, ...compressor };
+}
+
+async function compressToM4a(config, wav, m4a, signal) {
+  const compressor = pickCompressor(config.audioCompressor);
+  try {
+    await execFileAsync(compressor.bin, compressor.args(wav, m4a), {
+      timeout: PIPER_TIMEOUT_MS,
+      maxBuffer: 8 * 1024 * 1024,
+      signal,
+    });
+    return { buffer: await readFile(m4a), ext: 'm4a', contentType: 'audio/mp4' };
+  } catch (error) {
+    if (isAbort(error, signal)) throw cancelledError();
+    const detail = String(error.stderr || error.message).trim().split('\n').slice(-3).join(' ').slice(0, 300);
+    const hint = error.code === 'ENOENT' ? ` Программа ${compressor.bin} не найдена в PATH.` : '';
+    throw new TtsError('tts_failed', `Сжатие аудио (${compressor.name}) не удалось: ${detail}.${hint}`);
+  }
+}
+
+// Локальный синтез Piper: python из venv запускает пакет piper-tts и пишет WAV,
+// дальше сжиматель превращает его в m4a.
 async function synthesizeWithPiper(config, text, voice = config.piperModel, signal) {
   const missing = missingPiperParts(config, voice);
   if (missing.length > 0) {
@@ -628,25 +671,14 @@ async function synthesizeWithPiper(config, text, voice = config.piperModel, sign
       throw new TtsError('tts_failed', `Локальный синтез (piper) не удался: ${reason}`);
     }
 
-    try {
-      await execFileAsync('afconvert', ['-f', 'm4af', '-d', 'aac', wav, m4a], {
-        timeout: PIPER_TIMEOUT_MS,
-        maxBuffer: 8 * 1024 * 1024,
-        signal,
-      });
-      return { buffer: await readFile(m4a), ext: 'm4a', contentType: 'audio/mp4' };
-    } catch (error) {
-      if (isAbort(error, signal)) throw cancelledError();
-      const detail = String(error.stderr || error.message).trim().split('\n').slice(-3).join(' ').slice(0, 300);
-      throw new TtsError('tts_failed', `Сжатие аудио (afconvert) не удалось: ${detail}`);
-    }
+    return await compressToM4a(config, wav, m4a, signal);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
 }
 
 // Локальный синтез Silero: python из venv .venv-silero запускает silero_tts_cli.py,
-// тот пишет WAV, дальше afconvert сжимает его в m4a — как и у piper.
+// тот пишет WAV, дальше сжиматель превращает его в m4a — как и у piper.
 async function synthesizeWithSilero(config, text, voice, signal) {
   const missing = missingSileroParts(config);
   if (missing.length > 0) {
@@ -701,18 +733,7 @@ async function synthesizeWithSilero(config, text, voice, signal) {
       throw new TtsError('tts_failed', `Локальный синтез (silero) не удался: ${reason}${hint}`);
     }
 
-    try {
-      await execFileAsync('afconvert', ['-f', 'm4af', '-d', 'aac', wav, m4a], {
-        timeout: PIPER_TIMEOUT_MS,
-        maxBuffer: 8 * 1024 * 1024,
-        signal,
-      });
-      return { buffer: await readFile(m4a), ext: 'm4a', contentType: 'audio/mp4' };
-    } catch (error) {
-      if (isAbort(error, signal)) throw cancelledError();
-      const detail = String(error.stderr || error.message).trim().split('\n').slice(-3).join(' ').slice(0, 300);
-      throw new TtsError('tts_failed', `Сжатие аудио (afconvert) не удалось: ${detail}`);
-    }
+    return await compressToM4a(config, wav, m4a, signal);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
