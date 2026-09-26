@@ -8,7 +8,10 @@ primary_region = "waw"
   dockerfile = "server/Dockerfile"
 
 [env]
-  # Кэш аудио и voices.json живут на томе: переживают перезапуск и деплой.
+  # Бот принимает апдейты вебхуком: запрос от Telegram и есть то, что будит заснувшую машину.
+  BOT_MODE = "webhook"
+  PUBLIC_API_BASE = "https://tg-reader-backend.fly.dev"
+  # Кэш аудио и voices.json живут на томе: переживают засыпание, холодный старт и деплой.
   AUDIO_CACHE_DIR = "/data/audio"
   TTS_SILERO_DATA_DIR = "/data/silero"
   TTS_AUDIO_COMPRESSOR = "ffmpeg"
@@ -22,11 +25,11 @@ primary_region = "waw"
 [http_service]
   internal_port = 3001
   force_https = true
-  # Бот опрашивает Telegram постоянно, поэтому машина не должна засыпать:
-  # после остановки посты перестают приходить, пока кто-то не откроет Mini App.
-  auto_stop_machines = false
+  # Машина засыпает, когда к ней не приходят запросы, и просыпается на запрос Telegram.
+  # Заплачено будет только за время работы: в простое считаются лишь образ и том.
+  auto_stop_machines = "suspend"
   auto_start_machines = true
-  min_machines_running = 1
+  min_machines_running = 0
 
   [[http_service.checks]]
     interval = "30s"
@@ -36,7 +39,7 @@ primary_region = "waw"
     path = "/api/health"
 
 [[vm]]
-  # Синтез идёт на CPU: два ядра заметно сокращают время части, памяти хватает 2 ГБ
-  # (torch + модель ~ 1 ГБ в пике). Размер меняется здесь или в дашборде.
-  size = "shared-cpu-2x"
+  # Одна общая vCPU и 2 ГБ: больше 2 ГБ Fly не рекомендует для сна, а меньше нельзя —
+  # синтез части в 795 символов занимает 1.16 ГБ, плюс Node. Пока машина спит, память не считается.
+  size = "shared-cpu-1x"
   memory = "2gb"
