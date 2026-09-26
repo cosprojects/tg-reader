@@ -187,12 +187,19 @@ async function sendAudio(res, postId, provider, voice, index, req) {
   return stream.pipe(res);
 }
 
-function createHandler() {
+function createHandler({ webhook = null } = {}) {
   const ttsConfig = readTtsConfig();
   const scrub = makeKeyScrubber(ttsConfig);
 
   const route = async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
+
+    // Апдейты Telegram приходят сюда. Ответ и разбор тела — на стороне grammY:
+    // он же сверяет заголовок X-Telegram-Bot-Api-Secret-Token и отвечает 401 на чужой запрос.
+    if (webhook && url.pathname === webhook.path) {
+      if (req.method !== 'POST') return sendJson(res, 405, { error: 'method_not_allowed', message: 'Разрешён только POST.' });
+      return webhook.handler(req, res);
+    }
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204, CORS);
@@ -366,13 +373,16 @@ function createHandler() {
   };
 }
 
-export function startApi({ port }) {
-  const server = http.createServer(createHandler());
+// webhook задаётся только в режиме BOT_MODE=webhook: сервер принимает апдейты Telegram
+// на webhook.path и передаёт их боту.
+export function startApi({ port, webhook = null }) {
+  const server = http.createServer(createHandler({ webhook }));
 
   server.listen(port, () => {
     console.log(
       `[api] HTTP API слушает http://localhost:${port} (GET /api/posts/:id, POST /api/posts/:id/audio, GET /api/posts/:id/audio)`,
     );
+    if (webhook) console.log(`[api] апдейты Telegram принимаются на ${webhook.path}`);
   });
 
   return server;

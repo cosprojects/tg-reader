@@ -9,6 +9,7 @@
 // дубликаты ловятся по стабильному ключу Telegram (см. telegramPostKey в post-text.js),
 // а не по тексту — два разных поста могут иметь одинаковый текст.
 import { Bot, Keyboard } from 'grammy';
+import { autoRetry } from '@grammyjs/auto-retry';
 import { deletePostsOf, findPostByTelegramKey, getPost, postsOfUser, savePost } from './store.js';
 import { getSession, postRecord, rememberMessage, sessionStatus } from './session.js';
 import { describePost, extractPostText, telegramPostKey } from './post-text.js';
@@ -54,6 +55,10 @@ export const COMMANDS = [
   { command: 'reset', description: '🧹 Сбросить всё' },
   { command: 'help', description: '❓ Как это работает?' },
 ];
+
+// Типы апдейтов, которые бот обрабатывает. Список передаётся и в long polling, и в setWebhook:
+// в режиме вебхука каждый лишний тип — это лишняя побудка заснувшей машины.
+export const HANDLED_UPDATES = ['message', 'callback_query'];
 
 const HOW_IT_WORKS = [
   'Как это работает',
@@ -138,6 +143,12 @@ export function createBot({
   client,
 }) {
   const bot = new Bot(token, { client });
+
+  // Повторы на сбоях связи: после возврата машины из сна первый запрос к Telegram может
+  // упасть на уже закрытом соединении (документация Fly предупреждает про ECONNRESET).
+  // grammY заворачивает сетевые сбои в HttpError, поэтому плагин их и повторяет:
+  // три попытки с задержкой 3, 6 и 12 секунд.
+  bot.api.config.use(autoRetry({ maxRetryAttempts: 3, maxDelaySeconds: 30 }));
   const scrub = makeScrubber(token);
   const provider = PUBLIC_PROVIDERS[0];
   const canSynthesize = isTtsConfigured(config, provider);
