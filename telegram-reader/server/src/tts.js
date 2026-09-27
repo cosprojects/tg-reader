@@ -303,10 +303,13 @@ export async function listSileroVoices(config) {
   const missing = missingSileroParts(config);
   if (missing.length > 0) throw new TtsError('tts_not_configured', `Silero не готов: ${missing.join('; ')}.`);
 
-  const { stdout } = await execFileAsync(
-    config.sileroPython,
-    [config.sileroScript, '--list-voices', '--model', config.sileroModel],
-    { timeout: SILERO_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 },
+  // Список голосов тоже поднимает модель, поэтому идёт через ту же очередь, что и синтез.
+  const { stdout } = await oneSynthesisAtATime(() =>
+    execFileAsync(
+      config.sileroPython,
+      [config.sileroScript, '--list-voices', '--model', config.sileroModel],
+      { timeout: SILERO_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 },
+    ),
   );
 
   // Среди вывода могут быть предупреждения torch — берём последнюю строку с JSON.
@@ -452,16 +455,41 @@ function linkSignals(signal, timeoutMs) {
   return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
+// Синтез идёт по одному за раз. Каждая часть — это отдельный процесс Python с моделью:
+// у Silero пиковая память такого процесса 1.16 ГБ, и два параллельных синтеза роняют
+// машину с 2 ГБ (проверка — server/test-synthesis-queue.mjs). Очередь на уровне части,
+// а не поста: второй пользователь вклинивается между частями первого, а не ждёт его
+// пост целиком. На одной vCPU параллельность всё равно не ускоряет работу.
+let synthesisChain = Promise.resolve();
+
+function oneSynthesisAtATime(task) {
+  const run = synthesisChain.then(
+    () => task(),
+    () => task(),
+  );
+  // Ошибка или отмена одной части не должна останавливать очередь для остальных.
+  synthesisChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 // Синтез одной части текста. Возвращает { buffer, ext, contentType }.
 // Единая точка выбора провайдера: { provider, voice }. Без них берётся конфиг.
 // signal прерывает работу провайдера: у локальных это SIGTERM запущенному процессу.
 export async function synthesizeChunk(config, text, { provider = config.provider, voice, signal } = {}) {
   throwIfAborted(signal);
-  if (provider === 'silero') return synthesizeWithSilero(config, text, voice, signal);
-  if (provider === 'piper') return synthesizeWithPiper(config, text, voice ?? config.piperModel, signal);
-  if (provider === 'macos-say') return synthesizeWithMacosSay(config, text, signal);
-  if (provider === 'openai') return synthesizeWithOpenAi(config, text, signal);
-  throw new TtsError('tts_not_implemented', `Провайдер TTS не подключён (provider=${provider}).`);
+
+  return oneSynthesisAtATime(() => {
+    // Пока часть ждала очереди, пользователь мог нажать «Остановить»: тогда не начинаем.
+    throwIfAborted(signal);
+    if (provider === 'silero') return synthesizeWithSilero(config, text, voice, signal);
+    if (provider === 'piper') return synthesizeWithPiper(config, text, voice ?? config.piperModel, signal);
+    if (provider === 'macos-say') return synthesizeWithMacosSay(config, text, signal);
+    if (provider === 'openai') return synthesizeWithOpenAi(config, text, signal);
+    throw new TtsError('tts_not_implemented', `Провайдер TTS не подключён (provider=${provider}).`);
+  });
 }
 
 // Парсер SSML у Silero не принимает латинские буквы: на «Часть I.» или «Apple»
